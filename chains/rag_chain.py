@@ -6,7 +6,8 @@ from typing import Optional
 from langchain_community.chat_models import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableParallel, RunnablePassthrough
+from langchain_core.runnables import RunnableParallel, RunnablePassthrough, RunnableLambda
+ 
 
 from app.config import Config
 from retrieval.retriever import DocumentRetriever
@@ -78,7 +79,6 @@ Context:
 
         human_prompt_text = "{question}"
 
-        # Create prompt template
         prompt = ChatPromptTemplate.from_messages(
             [
                 SystemMessagePromptTemplate.from_template(system_prompt_text),
@@ -86,12 +86,13 @@ Context:
             ]
         )
 
-        # Build chain using LCEL
+        # Build chain using LCEL with RunnableLambda adapters
         rag_chain = (
-            RunnableParallel(
-                context=(self.retriever.retrieve | format_documents),
-                question=RunnablePassthrough(),
-            )
+            {
+                # Wrap custom methods/functions so they can participate in the pipeline
+                "context": RunnableLambda(self.retriever.retrieve) | RunnableLambda(format_documents),
+                "question": RunnablePassthrough(),
+            }
             | prompt
             | self.llm
             | StrOutputParser()

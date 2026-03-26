@@ -1,59 +1,67 @@
 import time
 from typing import Optional
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import TranscriptsDisabled, NoTranscriptFound, VideoUnavailable
+from youtube_transcript_api._errors import TranscriptsDisabled, VideoUnavailable
 
 class YouTubeLoader:
     """Load and fetch transcripts from YouTube videos."""
 
     def __init__(self, language_codes: list[str] | None = None, retry_attempts: int = 3):
+        # Define the fallback hierarchy here (e.g., ['en', 'de'])
         self.language_codes = language_codes or ["en"]
         self.retry_attempts = retry_attempts
 
+        # Instantiate once to reuse internal HTTP sessions across multiple requests
+        self.api_client = YouTubeTranscriptApi()
+
     def fetch_transcript(self, url: str) -> Optional[str]:
-        """Fetch transcript with robust fallback logic and retries."""
+        """Fetch transcript utilizing the direct fetch() method."""
         try:
-            # Extract Video ID (Simplified for example)
-            video_id = url.split("v=")[-1] 
+            # Extract Video ID safely (ignoring extra URL parameters like &t=45s)
+            if "v=" in url:
+                video_id = url.split("v=")[-1].split("&")[0] 
+            else:
+                video_id = url # Fallback in case just the ID is passed
             
             if not video_id:
                 print(f"Invalid YouTube URL: {url}")
                 return None
 
-            # 1. Instantiate the API client (Required in modern versions)
-            ytt_api = YouTubeTranscriptApi()
-
             for attempt in range(1, self.retry_attempts + 1):
                 try:
-                    # 2. Use the instance method .list() instead of the static .list_transcripts()
-                    transcript_list = ytt_api.list(video_id)
+                    # Using the working fetch paradigm you discovered.
+                    # The library natively handles iterating through the language fallbacks.
+                    transcript_data = self.api_client.fetch(
+                        video_id, 
+                        languages=self.language_codes
+                    )
                     
-                    transcript_obj = None
-                    try:
-                        # Try preferred languages (manually created first)
-                        transcript_obj = transcript_list.find_manually_created_transcript(self.language_codes)
-                    except NoTranscriptFound:
-                        try:
-                            # Fallback to generated in preferred languages
-                            transcript_obj = transcript_list.find_generated_transcript(self.language_codes)
-                        except NoTranscriptFound:
-                            # Final fallback: just get whatever is available
-                            transcript_obj = next(iter(transcript_list))
-
-                    if transcript_obj:
-                        # 3. Use .fetch() on the resulting transcript object
-                        data = transcript_obj.fetch()
-                        full_text = " ".join([entry["text"] for entry in data])
+                    if transcript_data:
+                        # Extract and join the text blocks from the returned list of dictionaries
+                        # 3. Extract text safely, handling both Objects and Dictionaries
+                        text_fragments = []
+                        for entry in transcript_data:
+                            # If it's an object with a .text attribute (Your current scenario)
+                            if hasattr(entry, 'text'):
+                                text_fragments.append(entry.text)
+                            # Fallback: If it's a standard dictionary (Older versions)
+                            elif isinstance(entry, dict) and "text" in entry:
+                                text_fragments.append(entry["text"])
+                            else:
+                                # Log or ignore unknown structures
+                                continue
+                                
+                        full_text = " ".join(text_fragments)
                         return full_text
 
                 except (TranscriptsDisabled, VideoUnavailable) as e:
-                    print(f"Permanent Error: {str(e)}")
+                    print(f"Permanent Error: Video {video_id} - {str(e)}")
                     return None
                 except Exception as e:
-                    # Retry logic for transient/network errors
+                    # Catch transient network/bot detection errors
                     if attempt < self.retry_attempts:
                         wait_time = 2 ** attempt
-                        print(f"Attempt {attempt} failed, retrying in {wait_time}s...")
+                        print(f"Attempt {attempt} failed ({str(e)}), retrying in {wait_time}s...")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -68,14 +76,20 @@ class YouTubeLoader:
     def fetch_and_clean(self, url: str) -> Optional[str]:
         transcript = self.fetch_transcript(url)
         if transcript:
-            # Basic clean logic
+            # Clean text by replacing excessive whitespace/newlines with a single space
             return " ".join(transcript.split()) 
         return None
 
 if __name__ == "__main__":
-    loader = YouTubeLoader(language_codes=['en', 'es'])
+    # Test the loader with your specific language fallback
+    loader = YouTubeLoader(language_codes=['de', 'en'])
     test_url = "https://www.youtube.com/watch?v=eIho2S0ZahI"
+    
+    print(f"Attempting to fetch transcript for {test_url}...")
     result = loader.fetch_and_clean(test_url)
+    
     if result:
-        print(f"Success! Length: {len(result)}")
-        print(f"Snippet: {result[:100]}...")
+        print(f"\nSuccess! Transcript length: {len(result)} characters")
+        print(f"Snippet: {result[:200]}...")
+    else:
+        print("\nFailed to retrieve transcript.")
