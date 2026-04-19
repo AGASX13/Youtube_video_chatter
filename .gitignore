@@ -46,6 +46,7 @@ data/vectorstore_store/
 logs/
 *.log
 .env
+.env.example
 
 # OS
 .DS_Store
