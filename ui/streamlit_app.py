@@ -4,7 +4,7 @@ Streamlit web interface for YouTube Video Chatter RAG application.
 
 import streamlit as st
 from streamlit_option_menu import option_menu
-import sys
+import sys  
 import os
 
 # Add parent directory to path (project root)
@@ -42,21 +42,21 @@ st.markdown(
         margin-bottom: 30px;
     }
     .info-box {
-        background-color: #f0f2f6;
+        background-color: #808080;
         border-left: 4px solid #FF0000;
         padding: 10px 15px;
         border-radius: 5px;
         margin: 10px 0;
     }
     .success-box {
-        background-color: #d4edda;
+        background-color: #808080;
         border-left: 4px solid #28a745;
         padding: 10px 15px;
         border-radius: 5px;
         margin: 10px 0;
     }
     .error-box {
-        background-color: #f8d7da;
+        background-color: #808080;
         border-left: 4px solid #dc3545;
         padding: 10px 15px;
         border-radius: 5px;
@@ -88,35 +88,23 @@ def init_vectorstore(embedding_model):
     """Initialize vector store (cached)."""
     return FAISSVectorStore(embedding_model=embedding_model)
 
-
 def load_video_transcript(youtube_url: str) -> tuple[bool, str]:
     """
-    Load and process YouTube video transcript.
-
-    Returns:
-        (success: bool, message: str)
+    Load and process YouTube video transcript using Whisper (audio-based).
     """
-    with st.spinner("🔄 Fetching YouTube transcript..."):
+
+    with st.spinner("🔄 Downloading & transcribing audio (Whisper)..."):
         try:
             video_id = extract_youtube_video_id(youtube_url)
             if not video_id:
-                return False, "❌ Invalid YouTube URL. Please provide a valid URL or video ID."
+                return False, "❌ Invalid YouTube URL. Please provide a valid URL."
 
-            loader = YouTubeLoader(retry_attempts=3)
-            transcript = loader.fetch_and_clean(video_id)
+            # ✅ FIXED: No retry_attempts + pass full URL
+            loader = YouTubeLoader()
+            transcript = loader.fetch_and_clean(youtube_url)
 
             if not transcript:
-                return False, (
-                    "❌ Could not fetch transcript.\n\n"
-                    "**Possible reasons:**\n"
-                    "1. Video has captions disabled\n"
-                    "2. Video is private or removed\n"
-                    "3. YouTube API temporarily unavailable\n\n"
-                    "**Try:**\n"
-                    "- Use a video with captions (check CC button on YouTube)\n"
-                    "- Try a public educational video or TED Talk\n"
-                    "- Wait a moment and try again"
-                )
+                return False, "❌ Failed to extract transcript using Whisper."
 
             # Split text
             with st.spinner("✂️ Splitting text into chunks..."):
@@ -124,10 +112,10 @@ def load_video_transcript(youtube_url: str) -> tuple[bool, str]:
                 chunks = splitter.split_text(transcript)
 
                 if not chunks:
-                    return False, "❌ Failed to split transcript into chunks."
+                    return False, "❌ Failed to split transcript."
 
-            # Create/update vector store
-            with st.spinner("🔐 Generating embeddings and creating index..."):
+            # Create vectorstore
+            with st.spinner("🔐 Creating embeddings..."):
                 embedding_model = init_embedding_model()
                 vectorstore = FAISSVectorStore(embedding_model=embedding_model)
                 vectorstore.create_index(chunks)
@@ -137,11 +125,13 @@ def load_video_transcript(youtube_url: str) -> tuple[bool, str]:
                 st.session_state.retriever = DocumentRetriever(
                     vectorstore=vectorstore, top_k=Config.TOP_K
                 )
-                st.session_state.chain = RAGChain(retriever=st.session_state.retriever)
+                st.session_state.chain = RAGChain(
+                    retriever=st.session_state.retriever
+                )
                 st.session_state.current_video_id = video_id
                 st.session_state.memory.clear()
 
-            return True, f"✅ Successfully loaded transcript! ({len(chunks)} chunks created)"
+            return True, f"✅ Video processed successfully! ({len(chunks)} chunks)"
 
         except Exception as e:
             logger.error(f"Error loading transcript: {str(e)}")
